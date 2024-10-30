@@ -1,0 +1,67 @@
+AI_Debugger_Assistant/
+├── agent/                           # Core AI agent modules and sub-agents
+│   ├── __init__.py
+│   ├── core/                        # Core debugging and analysis functionalities
+│   │   ├── __init__.py
+│   │   ├── error_detection.py       # Detects errors in code (e.g., syntax, runtime, logic)
+│   │   ├── suggestion_generator.py  # Provides suggestions for debugging and improvements
+│   │   ├── validation.py            # Validates code and tests
+│   │   └── code_analysis.py         # Analyzes code structure and dependencies
+│   ├── personality/                 # Manages agent's personality and response style
+│   │   ├── __init__.py
+│   │   ├── personality_manager.py   # Configures personality traits for each agent
+│   │   └── response_generator.py    # Creates responses based on personality traits
+│   ├── integrations/                # Handles external connections (e.g., Mistral, IDEs)
+│   │   ├── __init__.py
+│   │   ├── mistral_integration.py   # Integration with Mistral for NLP
+│   │   └── ide_integration.py       # IDE connections (e.g., VS Code, PyCharm)
+│   ├── memory/                      # Manages memory operations and persistence
+│   │   ├── __init__.py
+│   │   ├── memory_manager.py        # Stores and retrieves agent interaction history
+│   │   └── logging_handler.py       # Logging for debug and report tracking
+│   ├── tools/                       # Tool classes for handling different tasks
+│   │   ├── __init__.py
+│   │   ├── file_editor.py           # File manipulation (read/write/modify)
+│   │   ├── python_notebook.py       # Manages notebook execution
+│   │   ├── web_browser.py           # Web browser functionality
+│   │   ├── shell.py                 # Executes commands within Docker (sandboxed)
+│   │   └── rapid_api.py             # Interacts with APIs (e.g., Twitter, news)
+│   ├── agents.py                    # Core agent classes (planner, actor, creator)
+│   ├── agent_creator.py             # Creates new agents based on JSON configurations
+│   ├── task_manager_agent.py        # Manages task assignment to appropriate agents
+│   ├── gpt4_agent.py                # GPT-4 based general agent class for tasks
+│   ├── ai_agent.py                  # AIAgentWithMemory for interactive sessions
+│
+├── config/                          # Configuration files
+│   ├── __init__.py
+│   ├── agent_config.json            # Configuration for agent types, roles, and functions
+│   ├── personality_config.json      # Personality and response configurations
+│   └── config.py                    # Core configuration settings (e.g., DB paths, API keys)
+│
+├── data/                            # Storage for logs, cache, and models
+│   ├── __init__.py
+│   ├── cache/                       # Cache for faster data retrieval
+│   ├── logs/                        # Logs for agent interactions and debugging
+│   └── models/                      # Trained AI models for NLP and predictions
+│
+├── gui/                             # User Interface for agent interaction
+│   ├── __init__.py
+│   ├── ai_agent_gui.py              # DearPyGUI-based GUI for interacting with the agent
+│   ├── templates/                   # GUI templates for advanced interactions
+│   └── static/                      # Static assets for the GUI (e.g., CSS, JS)
+│
+├── tests/                           # Unit tests for each module
+│   ├── __init__.py
+│   ├── core/                        # Tests for core debugging functionality
+│   ├── personality/                 # Tests for personality-based responses
+│   ├── integrations/                # Tests for integrations with Mistral, IDEs
+│   ├── tools/                       # Tests for FileEditor, Shell, etc.
+│   ├── agent_creator_tests.py       # Tests for dynamic agent creation
+│   └── task_manager_agent_tests.py  # Tests for TaskManagerAgent
+│
+├── scripts/                         # CLI scripts for managing and launching agents
+│   ├── start_agent.py               # CLI for starting the main agent
+│   ├── manage_memory.py             # Memory maintenance and cleanup script
+│   └── summarize_memory.py          # Summarizes memory for optimized storage
+├── main.py                          # Main entry point for initializing the TaskManagerAgent
+└── README.md                        # Documentation

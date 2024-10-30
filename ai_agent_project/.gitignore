@@ -1,0 +1,27 @@
+# .gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# SQLite database
+*.db
+
+# Logs
+logs/*.log
+
+# IDE configurations
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
