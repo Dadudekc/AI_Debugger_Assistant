@@ -24,17 +24,15 @@ class ExampleAgent(AgentPlugin):
     def describe_capabilities(self) -> str:
         return "ExampleAgent can execute basic tasks and provide example responses."
 
-def run_task(task_data: dict) -> str:
+def run_task(data):
     """
-    Example plugin task that processes input data and returns a result.
+    Example plugin task function.
     
     Args:
-        task_data (dict): Data required for the task.
-        
+        data (dict): Data passed to the plugin.
+    
     Returns:
-        str: Result of the task.
+        str: Result of the plugin task.
     """
-    input_data = task_data.get("input", "")
-    # Perform some processing (e.g., reversing the input string)
-    processed_data = input_data[::-1]
-    return f"Processed data: {processed_data}"
+    input_data = data.get("input", "No input provided.")
+    return f"Plugin executed with input: {input_data}"

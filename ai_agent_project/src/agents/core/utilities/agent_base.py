@@ -21,15 +21,16 @@
 #
 # Usage:
 # Agents inheriting from `RobustAgent` should implement the `solve_task` method,
-# defining their unique task-solving logic. The base class handles logging, 
+# defining their unique task-solving logic. The base class handles logging,
 # scheduling, persistent state management, dynamic plugin loading, AI-driven
 # error handling, memory management, performance monitoring, and user interaction
 # to ensure task reliability, scalability, and consistency.
 # -------------------------------------------------------------------
 
+import asyncio
 import abc
 import logging
-import importlib
+import importlib.util
 import json
 import os
 from typing import Any, Callable, Optional, Dict
@@ -38,12 +39,14 @@ from apscheduler.triggers.cron import CronTrigger
 from pathlib import Path
 import traceback
 import subprocess
-from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime, Text, Float
+from sqlalchemy import create_engine, Column, Integer, String, Enum as SqlEnum, DateTime, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
 import enum
 import time
 from datetime import datetime, timezone, timedelta
 from difflib import SequenceMatcher
+from memory_manager import MemoryManager
+from ChainOfThoughtReasoner import ChainOfThoughtReasoner  # Adjust the import path accordingly
 
 # Database Model Setup
 Base = declarative_base()
@@ -59,7 +62,7 @@ class Task(Base):
     __tablename__ = 'tasks'
     id = Column(Integer, primary_key=True)
     type = Column(String, nullable=False)
-    status = Column(Enum(TaskState), default=TaskState.pending)
+    status = Column(SqlEnum(TaskState), default=TaskState.pending)
     start_time = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     end_time = Column(DateTime)
     result = Column(Text)  # Text to allow for larger outputs
@@ -94,15 +97,17 @@ class RobustAgent(metaclass=abc.ABCMeta):
 
     Represents a comprehensive AI agent with task management, error handling,
     memory management, performance monitoring, and self-improvement capabilities.
-    Integrates with MemoryManager and PerformanceMonitor to handle memory and performance operations.
+    Integrates with MemoryManager, PerformanceMonitor, and ChainOfThoughtReasoner to handle
+    memory, performance, and advanced reasoning operations.
     """
 
     MAX_RETRIES = 3  # Max retries for task failure
     SIMILARITY_THRESHOLD = 0.75  # Threshold for error similarity
 
     def __init__(self, name: str, description: str, project_name: str, plugin_dir: str = "plugins",
-                 memory_manager: Any = None, performance_monitor: Any = None,
-                 log_to_file: bool = False, dispatcher=None):
+                 memory_manager: Optional[MemoryManager] = None, performance_monitor: Any = None,
+                 log_to_file: bool = False, dispatcher=None,
+                 reasoner: Optional[ChainOfThoughtReasoner] = None):
         """
         Initialize the RobustAgent with necessary components.
 
@@ -111,10 +116,11 @@ class RobustAgent(metaclass=abc.ABCMeta):
             description (str): Description of the agent's capabilities.
             project_name (str): Name of the project/domain the agent is associated with.
             plugin_dir (str): Directory for dynamically loaded task plugins.
-            memory_manager (Any): Instance of MemoryManager for handling memory operations.
+            memory_manager (MemoryManager): Instance of MemoryManager for handling memory operations.
             performance_monitor (Any): Instance of PerformanceMonitor for tracking performance.
             log_to_file (bool): Whether to log to a file instead of the console.
             dispatcher (Any): Reference to the dispatcher for self-improvement actions.
+            reasoner (ChainOfThoughtReasoner): Instance of ChainOfThoughtReasoner for advanced reasoning.
         """
         self.name = name
         self.description = description
@@ -123,6 +129,7 @@ class RobustAgent(metaclass=abc.ABCMeta):
         self.memory_manager = memory_manager  # Should be an instance of MemoryManager
         self.performance_monitor = performance_monitor  # Should be an instance of PerformanceMonitor
         self.dispatcher = dispatcher
+        self.reasoner = reasoner  # Initialize the reasoner
 
         self.logger = logging.getLogger(self.name)
         self._setup_logger(log_to_file)
@@ -174,7 +181,8 @@ class RobustAgent(metaclass=abc.ABCMeta):
         plugins = {}
         plugin_path = Path(self.plugin_dir)
         if not plugin_path.exists():
-            self.logger.warning(f"Plugin directory '{self.plugin_dir}' does not exist.")
+            self.logger.warning(f"Plugin directory '{self.plugin_dir}' does not exist. Creating it.")
+            plugin_path.mkdir(parents=True, exist_ok=True)
             return plugins
 
         for plugin_file in plugin_path.glob("*.py"):
@@ -255,40 +263,79 @@ class RobustAgent(metaclass=abc.ABCMeta):
         """
         task_id = self.save_task_state("task_execution", TaskState.pending)
         try:
-            result = self._execute_with_retry(task_id, task_data)
+            # Check if task is complex and requires reasoning
+            if task_data.get("type") == "complex_task":
+                # Use asynchronous reasoning
+                result = asyncio.run(self.solve_task_with_reasoning(task_data.get("description", "")))
+            else:
+                result = self._execute_with_retry(task_id, task_data)
             self.update_task_state(task_id, TaskState.completed, result=result)
             return result
         except Exception as e:
             self.log_error(e, {"task_data": task_data})
             self.update_task_state(task_id, TaskState.failed)
-            # Handle multi-error diagnosis
-            stack_trace = traceback.format_exc()
-            error_messages = self._extract_error_messages(stack_trace)
-            # Check for existing resolutions
-            resolution = self.check_resolution_history(error_messages)
-            if resolution:
-                self.logger.info(f"Found existing resolution: {resolution.ai_suggestion}")
-                return resolution.ai_suggestion
-            # Attempt AI-based resolution
-            for error_message in error_messages:
-                ai_suggestion = self.ai_diagnose_and_resolve(error_message)
-                if ai_suggestion:
-                    self.save_resolution_history(error_message, ai_suggestion)
-                    return ai_suggestion
-            # Check for cached user decision
-            user_decision = self.get_cached_user_decision(error_messages)
-            if user_decision:
-                self.logger.info(f"Applying cached user decision: {user_decision}")
-                return user_decision
-            # Prompt user for high-level decision
-            user_decision_input = input("AI could not resolve the issue. Do you want to attempt manual resolution? (y/n): ")
-            if user_decision_input.lower() == 'y':
-                manual_resolution = input("Please provide a manual resolution: ")
-                self.save_resolution_history(" | ".join(error_messages), manual_resolution)
-                self.cache_user_decision(" | ".join(error_messages), manual_resolution)
-                return manual_resolution
-            # Fallback mechanism
-            return fallback() if fallback else "An error occurred while processing the task."
+            return self.handle_error_resolution(task_id, e, fallback)
+
+    def handle_error_resolution(self, task_id: int, error: Exception, fallback: Optional[Callable] = None) -> str:
+        """
+        Manages the resolution process for errors, including checking history, AI diagnosis,
+        cached decisions, and user prompts.
+
+        Args:
+            task_id (int): The ID of the failed task.
+            error (Exception): The raised exception during task execution.
+            fallback (Optional[Callable]): Optional fallback function.
+
+        Returns:
+            str: Suggested resolution or fallback message.
+        """
+        stack_trace = traceback.format_exc()
+        error_messages = self._extract_error_messages(stack_trace)
+
+        # Check for existing resolutions
+        resolution = self.check_resolution_history(error_messages)
+        if resolution:
+            self.logger.info(f"Found existing resolution: {resolution.ai_suggestion}")
+            return resolution.ai_suggestion
+
+        # Attempt AI-based resolution
+        for error_message in error_messages:
+            ai_suggestion = self.ai_diagnose_and_resolve(error_message)
+            if ai_suggestion:
+                self.save_resolution_history(error_message, ai_suggestion)
+                return ai_suggestion
+
+        # Check for cached user decision
+        user_decision = self.get_cached_user_decision(error_messages)
+        if user_decision:
+            self.logger.info(f"Applying cached user decision: {user_decision}")
+            return user_decision
+
+        # Prompt user for manual resolution
+        return self.prompt_user_for_manual_resolution(error_messages, fallback)
+
+    def prompt_user_for_manual_resolution(self, error_messages: list, fallback: Optional[Callable] = None) -> str:
+        """
+        Prompts the user for a manual resolution when automated methods fail.
+
+        Args:
+            error_messages (list): List of error messages to provide context.
+            fallback (Optional[Callable]): Optional fallback function.
+
+        Returns:
+            str: User-provided manual resolution or fallback message.
+        """
+        error_context = " | ".join(error_messages)
+        user_decision_input = input(f"AI could not resolve the issue: {error_context}. Do you want to attempt manual resolution? (y/n): ")
+
+        if user_decision_input.lower() == 'y':
+            manual_resolution = input("Please provide a manual resolution: ")
+            self.save_resolution_history(error_context, user_decision=manual_resolution)
+            self.cache_user_decision(error_context, manual_resolution)
+            return manual_resolution
+
+        # Fallback mechanism
+        return fallback() if fallback else "An error occurred while processing the task."
 
     def _extract_error_messages(self, stack_trace: str) -> list:
         """
@@ -343,40 +390,56 @@ class RobustAgent(metaclass=abc.ABCMeta):
     def save_task_state(self, task_type: str, initial_status: TaskState) -> int:
         """Saves a new task state to the database for fault tolerance."""
         session = Session()
-        task = Task(type=task_type, status=initial_status)
-        session.add(task)
-        session.commit()
-        self.logger.info(f"Task '{task_type}' saved with state '{initial_status.name}' and ID {task.id}.")
-        session.close()
-        return task.id
+        try:
+            task = Task(type=task_type, status=initial_status)
+            session.add(task)
+            session.commit()
+            self.logger.info(f"Task '{task_type}' saved with state '{initial_status.name}' and ID {task.id}.")
+            return task.id
+        except Exception as e:
+            self.logger.error(f"Error saving task state: {e}")
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def update_task_state(self, task_id: int, new_status: TaskState, result: Optional[str] = None):
         """Updates the status and result of a task in the database."""
         session = Session()
-        task = session.query(Task).filter(Task.id == task_id).one_or_none()
-        if task:
-            task.status = new_status
-            if result:
-                task.result = result
-            task.end_time = datetime.now(timezone.utc)
-            session.commit()
-            self.logger.info(f"Task ID {task_id} updated to status '{new_status.name}' with result: {result}")
-        else:
-            self.logger.error(f"Task ID {task_id} not found in the database.")
-        session.close()
+        try:
+            task = session.query(Task).filter(Task.id == task_id).one_or_none()
+            if task:
+                task.status = new_status
+                if result:
+                    task.result = result
+                task.end_time = datetime.now(timezone.utc)
+                session.commit()
+                self.logger.info(f"Task ID {task_id} updated to status '{new_status.name}' with result: {result}")
+            else:
+                self.logger.error(f"Task ID {task_id} not found in the database.")
+        except Exception as e:
+            self.logger.error(f"Error updating task state: {e}")
+            session.rollback()
+        finally:
+            session.close()
 
     def save_resolution_history(self, error_message: str, ai_suggestion: Optional[str] = None, user_decision: Optional[str] = None):
         """Saves a resolution history entry to the database."""
         session = Session()
-        resolution = ResolutionHistory(
-            error_message=error_message,
-            ai_suggestion=ai_suggestion,
-            user_decision=user_decision
-        )
-        session.add(resolution)
-        session.commit()
-        self.logger.info(f"Resolution history saved for error: {error_message}")
-        session.close()
+        try:
+            resolution = ResolutionHistory(
+                error_message=error_message,
+                ai_suggestion=ai_suggestion,
+                user_decision=user_decision
+            )
+            session.add(resolution)
+            session.commit()
+            self.logger.info(f"Resolution history saved for error: {error_message}")
+        except Exception as e:
+            self.logger.error(f"Error saving resolution history: {e}")
+            session.rollback()
+        finally:
+            session.close()
 
     def check_resolution_history(self, error_messages: list) -> Optional[ResolutionHistory]:
         """
@@ -389,10 +452,15 @@ class RobustAgent(metaclass=abc.ABCMeta):
             Optional[ResolutionHistory]: The resolution history entry if found.
         """
         session = Session()
-        combined_error = " | ".join(error_messages)
-        resolution = session.query(ResolutionHistory).filter(ResolutionHistory.error_message == combined_error).first()
-        session.close()
-        return resolution
+        try:
+            combined_error = " | ".join(error_messages)
+            resolution = session.query(ResolutionHistory).filter(ResolutionHistory.error_message == combined_error).first()
+            return resolution
+        except Exception as e:
+            self.logger.error(f"Error checking resolution history: {e}")
+            return None
+        finally:
+            session.close()
 
     def get_cached_user_decision(self, error_messages: list) -> Optional[str]:
         """
@@ -405,33 +473,39 @@ class RobustAgent(metaclass=abc.ABCMeta):
             Optional[str]: The cached user decision if available, or None if no recent match is found.
         """
         session = Session()
-        combined_error = " | ".join(error_messages)
+        try:
+            combined_error = " | ".join(error_messages)
 
-        # Define an expiration period for entries (e.g., 30 days)
-        expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
+            # Define an expiration period for entries (e.g., 30 days)
+            expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
 
-        # Fetch all recent cache entries
-        recent_entries = session.query(UserDecisionCache).filter(
-            UserDecisionCache.timestamp >= expiration_threshold
-        ).all()
+            # Fetch all recent cache entries
+            recent_entries = session.query(UserDecisionCache).filter(
+                UserDecisionCache.timestamp >= expiration_threshold
+            ).all()
 
-        # Find the closest match based on similarity
-        best_match, best_similarity = None, 0
-        for entry in recent_entries:
-            similarity = SequenceMatcher(None, entry.error_message, combined_error).ratio()
-            if similarity > self.SIMILARITY_THRESHOLD and similarity > best_similarity:
-                best_match, best_similarity = entry, similarity
+            # Find the closest match based on similarity
+            best_match, best_similarity = None, 0
+            for entry in recent_entries:
+                similarity = SequenceMatcher(None, entry.error_message, combined_error).ratio()
+                if similarity > self.SIMILARITY_THRESHOLD and similarity > best_similarity:
+                    best_match, best_similarity = entry, similarity
 
-        # Update usage metadata if a suitable match is found
-        if best_match:
-            best_match.usage_count += 1
-            best_match.last_used = datetime.now(timezone.utc)
-            session.commit()
-            self.logger.info(f"Retrieved cached decision with {best_similarity:.2f} similarity for error: {combined_error}")
-            return best_match.user_decision
+            # Update usage metadata if a suitable match is found
+            if best_match:
+                best_match.usage_count += 1
+                best_match.last_used = datetime.now(timezone.utc)
+                session.commit()
+                self.logger.info(f"Retrieved cached decision with {best_similarity:.2f} similarity for error: {combined_error}")
+                return best_match.user_decision
 
-        self.logger.info(f"No suitable cached decision found for error: {combined_error}")
-        return None
+            self.logger.info(f"No suitable cached decision found for error: {combined_error}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error retrieving cached user decision: {e}")
+            return None
+        finally:
+            session.close()
 
     def cache_user_decision(self, error_message: str, user_decision: str):
         """
@@ -442,49 +516,53 @@ class RobustAgent(metaclass=abc.ABCMeta):
             user_decision (str): The user's resolution decision.
         """
         session = Session()
+        try:
+            # Cleanup expired entries
+            expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
+            session.query(UserDecisionCache).filter(
+                UserDecisionCache.timestamp < expiration_threshold
+            ).delete()
+            session.commit()
 
-        # Cleanup expired entries
-        expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
-        session.query(UserDecisionCache).filter(
-            UserDecisionCache.timestamp < expiration_threshold
-        ).delete()
-        session.commit()
+            # Check for existing entry
+            existing_entry = session.query(UserDecisionCache).filter(
+                UserDecisionCache.error_message == error_message
+            ).first()
 
-        # Check for existing entry
-        existing_entry = session.query(UserDecisionCache).filter(
-            UserDecisionCache.error_message == error_message
-        ).first()
+            if existing_entry:
+                # Update existing entry
+                existing_entry.user_decision = user_decision
+                existing_entry.usage_count += 1
+                existing_entry.last_used = datetime.now(timezone.utc)
+                self.logger.info(f"Updated cached user decision for error: {error_message}")
+            else:
+                # Add new entry
+                cache_entry = UserDecisionCache(
+                    error_message=error_message,
+                    user_decision=user_decision,
+                    timestamp=datetime.now(timezone.utc),
+                    usage_count=1,
+                    first_seen=datetime.now(timezone.utc),
+                    last_used=datetime.now(timezone.utc)
+                )
+                session.add(cache_entry)
+                self.logger.info(f"User decision cached for error: {error_message}")
 
-        if existing_entry:
-            # Update existing entry
-            existing_entry.user_decision = user_decision
-            existing_entry.usage_count += 1
-            existing_entry.last_used = datetime.now(timezone.utc)
-            self.logger.info(f"Updated cached user decision for error: {error_message}")
-        else:
-            # Add new entry
-            cache_entry = UserDecisionCache(
-                error_message=error_message,
-                user_decision=user_decision,
-                timestamp=datetime.now(timezone.utc),
-                usage_count=1,
-                first_seen=datetime.now(timezone.utc),
-                last_used=datetime.now(timezone.utc)
-            )
-            session.add(cache_entry)
-            self.logger.info(f"User decision cached for error: {error_message}")
+            # Dynamic retention management
+            self._manage_cache_size(session)
 
-        # Dynamic retention management
-        self._manage_cache_size(session)
-
-        session.commit()
-        session.close()
+            session.commit()
+        except Exception as e:
+            self.logger.error(f"Error caching user decision: {e}")
+            session.rollback()
+        finally:
+            session.close()
 
     def _manage_cache_size(self, session):
         """Manages the size of the user decision cache."""
         max_cache_size = 1000  # Set an arbitrary limit
         current_cache_size = session.query(UserDecisionCache).count()
-        
+
         if current_cache_size > max_cache_size:
             # Remove entries with low usage or that haven't been used recently
             session.query(UserDecisionCache).filter(
@@ -493,12 +571,11 @@ class RobustAgent(metaclass=abc.ABCMeta):
             ).delete()
             self.logger.info("Performed dynamic cleanup on cache due to size constraints.")
 
-
     def schedule_task(self, cron_expression: str, task_callable: Callable, task_data: dict, task_id: Optional[str] = None):
         """Schedules a recurring task based on a cron expression."""
         try:
             cron_trigger = CronTrigger.from_crontab(cron_expression)
-            self.scheduler.add_job(task_callable, cron_trigger, kwargs=task_data, id=task_id)
+            self.scheduler.add_job(task_callable, cron_trigger, kwargs={"task_data": task_data}, id=task_id)
             self.logger.info(f"Scheduled task '{task_id or task_callable.__name__}' with cron expression: {cron_expression}")
         except Exception as e:
             self.log_error(e)
@@ -712,7 +789,7 @@ class RobustAgent(metaclass=abc.ABCMeta):
         }
 
         # Find a suggestion based on the reason
-        suggestion = next((msg for key, msg in suggestions.items() if key in reason.lower()), 
+        suggestion = next((msg for key, msg in suggestions.items() if key in reason.lower()),
                           "I encountered an issue that needs attention. Please review the logs for more details.")
         self.logger.info(suggestion)
         print(f"AI Suggestion: {suggestion}")
@@ -745,3 +822,26 @@ class RobustAgent(metaclass=abc.ABCMeta):
             print(f"AI Suggestion: {suggestion_message}")
         else:
             self.logger.info("No improvements needed based on current performance data.")
+
+    async def solve_task_with_reasoning(self, task: str) -> str:
+        """
+        Solves a task using advanced chain-of-thought reasoning.
+
+        Args:
+            task (str): The main task to solve.
+
+        Returns:
+            str: The final result after reasoning.
+        """
+        if not self.reasoner:
+            self.logger.warning("ChainOfThoughtReasoner not initialized. Falling back to solve_task.")
+            return self.solve_task({"type": "simple_task"})  # Adjust as necessary
+
+        result = await self.reasoner.solve_task_with_reasoning(task, self.name)
+        return result
+
+    # Abstract method to be implemented by subclasses
+    @abc.abstractmethod
+    def solve_task(self, task_data: dict) -> str:
+        """Abstract method to solve a task. Must be implemented by subclasses."""
+        pass
