@@ -1,0 +1,12 @@
+
+# Auto-generated entries for project structure
+
+
+# Auto-generated entries for project structure
+
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+ai_agent_memory.db

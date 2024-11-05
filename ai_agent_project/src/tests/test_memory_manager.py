@@ -9,7 +9,7 @@ memory entries, ensuring data integrity, and handling edge cases.
 
 import unittest
 import os
-from memory_manager import MemoryManager
+from ai_agent_project.src.agents.core.utilities.memory_manager import MemoryManager
 
 class TestMemoryManager(unittest.TestCase):
     def setUp(self):

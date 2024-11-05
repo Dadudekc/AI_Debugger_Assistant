@@ -1,0 +1,45 @@
+Project Reorganization Log - 11/04/2024 22:57:53
+------------------------------------------
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\utils\config.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\utils\logger.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\ai_agent_gui.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\main_window.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\gui.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\debugger_agent.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\reasoner_controller.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\task_manager.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\trading_robot.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\config.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\migrate.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\main.py
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\.pre-commit-config.yaml
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\requirements.txt
+
+File not found (skipped): C:\Projects\AI_Debugger_Assistant\SampleAgent.log
+
+Created README.md in C:\Projects\AI_Debugger_Assistant\logs
+Created README.md in C:\Projects\AI_Debugger_Assistant\journals
+Created README.md in C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\tests
+
+Reorganization and setup completed on 11/04/2024 22:57:54
+
+Added to .gitignore: venv/
+Added to .gitignore: __pycache__/
+Added to .gitignore: *.pyc
+Added to .gitignore: *.pyo
+Added to .gitignore: *.log
+Added to .gitignore: ai_agent_memory.db

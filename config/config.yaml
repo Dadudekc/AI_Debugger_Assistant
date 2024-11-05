@@ -1,0 +1,20 @@
+# Path: ai_agent_project/config/config.yaml
+
+ai_models:
+  - name: Ollama
+    command: "ollama generate"
+    enabled: true
+  - name: Mistral
+    command: "mistral generate"
+    enabled: true
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    - console
+    - file
+
+cache:
+  enabled: true
+  cache_file: "ai_cache.json"

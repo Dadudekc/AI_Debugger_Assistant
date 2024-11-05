@@ -260,6 +260,16 @@ def _check_loop():
         """Resets the notebook's state."""
         self.state.clear()
 
+def track_performance(func):
+    """
+    A decorator function to log performance metrics of a function.
+    """
+    def wrapper(*args, **kwargs):
+        # Perform some performance tracking
+        result = func(*args, **kwargs)
+        # Log results or metrics as needed
+        return result
+    return wrapper
 
 # ------------------------
 # Shell Class

@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import os
 from AI_Debugger_Assistant.ai_agent_project.src.ai_agent_utils import AIAgentWithMemory
-from memory_manager import MemoryManager
+from ai_agent_project.src.agents.core.utilities.memory_manager import MemoryManager
 
 class TestAIAgentWithMemory(unittest.TestCase):
     def setUp(self):

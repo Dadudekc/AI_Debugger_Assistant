@@ -52,3 +52,57 @@ Once you've built the initial version:
 
 Gather feedback from users.
 Iterate on the features and improve the AI's capabilities based on actual usage patterns.
+AI_Debugger_Assistant/
+├── ai_agent_project/
+│   ├── src/
+│   │   ├── agents/
+│   │   │   ├── core/
+│   │   │   │   ├── agent_actor.py
+│   │   │   │   ├── agent_base.py
+│   │   │   │   ├── agent_planner.py
+│   │   │   │   ├── ai_agent_utils.py
+│   │   │   │   ├── chain_of_thought_reasoner.py
+│   │   │   │   ├── custom_agent.py
+│   │   │   │   ├── debugger_agent.py
+│   │   │   │   ├── journal_agent.py
+│   │   │   ├── __init__.py
+│   │   ├── utils/
+│   │   │   ├── config.py
+│   │   │   ├── logger.py
+│   │   │   ├── __init__.py
+│   │   ├── tests/
+│   │   │   ├── test_agent_dispatcher.py
+│   │   │   ├── test_journal_agent.py
+│   │   │   ├── __init__.py
+│   │   ├── agent_dispatcher.py
+│   │   ├── ai_agent_gui.py
+│   │   ├── config.py
+│   │   ├── gui.py
+│   │   ├── main_window.py
+│   │   ├── main.py
+│   │   ├── migrate.py
+│   │   ├── reasoner_controller.py
+│   │   ├── task_manager.py
+│   │   ├── trading_robot.py
+│   │   ├── __init__.py
+│   ├── .gitignore
+│   ├── ai_agent_memory.db
+│   ├── README.md
+├── config/
+│   ├── .env
+│   ├── README.md
+│   ├── __init__.py
+├── journals/
+│   ├── Debugging_Session_2024-11-02_19-33-21.json
+├── src/
+│   ├── main.py
+│   ├── README.md
+│   ├── __init__.py
+├── venv/
+├── .pre-commit-config.yaml
+├── error_detection.py
+├── idea/
+├── projectsetup.ps1
+├── README.md
+├── requirements.txt
+├── SampleAgent.log
