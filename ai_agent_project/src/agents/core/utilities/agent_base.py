@@ -394,7 +394,6 @@ class RobustAgent(metaclass=abc.ABCMeta):
         session.close()
         return resolution
 
-    # Enhanced cache retrieval with similarity matching
     def get_cached_user_decision(self, error_messages: list) -> Optional[str]:
         """
         Retrieves a cached user decision for similar error messages.
@@ -408,24 +407,20 @@ class RobustAgent(metaclass=abc.ABCMeta):
         session = Session()
         combined_error = " | ".join(error_messages)
 
-        # Define an expiration period (e.g., 30 days)
+        # Define an expiration period for entries (e.g., 30 days)
         expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
-        
-        # Fetch all recent cache entries and find the closest match based on similarity
-        recent_entries = (
-            session.query(UserDecisionCache)
-            .filter(UserDecisionCache.timestamp >= expiration_threshold)
-            .all()
-        )
 
-        # Evaluate similarity and track the closest match
-        best_match = None
-        best_similarity = 0
+        # Fetch all recent cache entries
+        recent_entries = session.query(UserDecisionCache).filter(
+            UserDecisionCache.timestamp >= expiration_threshold
+        ).all()
+
+        # Find the closest match based on similarity
+        best_match, best_similarity = None, 0
         for entry in recent_entries:
             similarity = SequenceMatcher(None, entry.error_message, combined_error).ratio()
             if similarity > self.SIMILARITY_THRESHOLD and similarity > best_similarity:
-                best_match = entry
-                best_similarity = similarity
+                best_match, best_similarity = entry, similarity
 
         # Update usage metadata if a suitable match is found
         if best_match:
@@ -433,14 +428,11 @@ class RobustAgent(metaclass=abc.ABCMeta):
             best_match.last_used = datetime.now(timezone.utc)
             session.commit()
             self.logger.info(f"Retrieved cached decision with {best_similarity:.2f} similarity for error: {combined_error}")
-            session.close()
             return best_match.user_decision
-        else:
-            self.logger.info(f"No suitable cached decision found for error: {combined_error}")
-            session.close()
+
+        self.logger.info(f"No suitable cached decision found for error: {combined_error}")
         return None
 
-    # Enhanced cache insertion with metadata and dynamic retention
     def cache_user_decision(self, error_message: str, user_decision: str):
         """
         Caches the user's decision with metadata, usage tracking, and dynamic retention based on frequency.
@@ -451,27 +443,26 @@ class RobustAgent(metaclass=abc.ABCMeta):
         """
         session = Session()
 
-        # Define expiration threshold
+        # Cleanup expired entries
         expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
-
-        # Cleanup expired entries and infrequent decisions beyond retention limits
         session.query(UserDecisionCache).filter(
-            (UserDecisionCache.timestamp < expiration_threshold) |
-            (UserDecisionCache.usage_count < 2)  # Arbitrary limit for infrequent entries
+            UserDecisionCache.timestamp < expiration_threshold
         ).delete()
         session.commit()
 
-        # Check if a similar entry already exists
-        existing_entry = session.query(UserDecisionCache).filter(UserDecisionCache.error_message == error_message).first()
+        # Check for existing entry
+        existing_entry = session.query(UserDecisionCache).filter(
+            UserDecisionCache.error_message == error_message
+        ).first()
 
         if existing_entry:
-            # Update the existing entry if a duplicate is found
+            # Update existing entry
             existing_entry.user_decision = user_decision
             existing_entry.usage_count += 1
             existing_entry.last_used = datetime.now(timezone.utc)
             self.logger.info(f"Updated cached user decision for error: {error_message}")
         else:
-            # Add metadata and initial usage data for a new entry
+            # Add new entry
             cache_entry = UserDecisionCache(
                 error_message=error_message,
                 user_decision=user_decision,
@@ -483,9 +474,17 @@ class RobustAgent(metaclass=abc.ABCMeta):
             session.add(cache_entry)
             self.logger.info(f"User decision cached for error: {error_message}")
 
-        # Dynamic retention management: Remove low-usage entries if the cache size is high
-        max_cache_size = 1000  # Example size limit
+        # Dynamic retention management
+        self._manage_cache_size(session)
+
+        session.commit()
+        session.close()
+
+    def _manage_cache_size(self, session):
+        """Manages the size of the user decision cache."""
+        max_cache_size = 1000  # Set an arbitrary limit
         current_cache_size = session.query(UserDecisionCache).count()
+        
         if current_cache_size > max_cache_size:
             # Remove entries with low usage or that haven't been used recently
             session.query(UserDecisionCache).filter(
@@ -494,8 +493,6 @@ class RobustAgent(metaclass=abc.ABCMeta):
             ).delete()
             self.logger.info("Performed dynamic cleanup on cache due to size constraints.")
 
-        session.commit()
-        session.close()
 
     def schedule_task(self, cron_expression: str, task_callable: Callable, task_data: dict, task_id: Optional[str] = None):
         """Schedules a recurring task based on a cron expression."""

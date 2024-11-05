@@ -9,11 +9,10 @@ from .ai_agent_utils import (
     log_memory_usage
 )
 from .ChainOfThoughtReasoner import ChainOfThoughtReasoner
-from .error_detection import detect_errors
+from .error_detection import ErrorDetection
 from .memory_manager import MemoryManager
 from .mistral_model import MistralModel
 from .ollama_model import OllamaModel
-from .performance_monitor import PerformanceMonitor
 
 __all__ = [
     "AgentBase",

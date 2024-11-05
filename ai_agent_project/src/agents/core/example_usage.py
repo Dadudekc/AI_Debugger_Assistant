@@ -1,25 +1,30 @@
 # example_usage.py
-
+from typing import Dict, Any
 import time
+import sys
+import os
 from utilities.agent_base import RobustAgent  # Adjust the import path as necessary
+
+# Add project directory to system path
+sys.path.append(os.path.abspath("C:/Projects/AI_Debugger_Assistant"))
 
 # Assuming MemoryManager and PerformanceMonitor are defined elsewhere
 class MemoryManager:
     def retrieve_memory(self, project_name: str, limit: int = 5) -> str:
-        # Placeholder implementation
+        # Placeholder implementation for retrieving memory context
         return "Previous interactions context. "
 
     def save_memory(self, project_name: str, prompt: str, response: str):
-        # Placeholder implementation
+        # Placeholder implementation for saving memory context
         pass
 
 class PerformanceMonitor:
     def log_performance(self, agent_name: str, prompt: str, success: bool, response: str):
-        # Placeholder implementation
+        # Placeholder implementation for logging performance
         pass
 
     def analyze_performance(self, agent_name: str) -> Dict[str, Any]:
-        # Placeholder implementation
+        # Placeholder implementation for performance analysis
         return {
             'success_rate': 85,
             'failures': 15,
@@ -74,7 +79,11 @@ if __name__ == "__main__":
 
     # Execute a task that triggers an error to test AI-based resolution and user prompts
     error_task_data = {"type": "trigger_error"}
-    print(agent.handle_task_with_error_handling(error_task_data))
+    try:
+        result = agent.handle_task_with_error_handling(error_task_data)
+        print(result)
+    except Exception as e:
+        print(f"Error during task execution: {e}")
 
     # Execute a plugin-based task (ensure 'example_plugin.py' exists in the plugins directory)
     plugin_task_data = {
@@ -85,7 +94,6 @@ if __name__ == "__main__":
     print(agent.solve_task(plugin_task_data))
 
     # Schedule a recurring task with fallback handling
-    # This example schedules the 'handle_task_with_error_handling' method to run every minute
     scheduled_task_id = "recurring_error_task"
     agent.schedule_task(
         cron_expression="*/1 * * * *",  # Every minute

@@ -3,7 +3,8 @@
 import subprocess
 import asyncio
 import logging
-from ai_agent_project.src.agents.core.utilities.ai_model import AIModel
+from .ai_model import AIModel
+
 
 
 class OllamaModel(AIModel):
