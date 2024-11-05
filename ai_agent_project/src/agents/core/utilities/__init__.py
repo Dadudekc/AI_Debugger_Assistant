@@ -1,6 +1,6 @@
 # utilities/__init__.py
 
-from .agent_base import AgentBase
+from .agent_base import RobustAgent
 from .ai_cache import AICache
 from .ai_model import AIModel
 from .ai_agent_utils import (

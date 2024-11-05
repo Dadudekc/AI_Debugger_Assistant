@@ -335,7 +335,126 @@ class ToolServer:
         Executes Python code using the Python notebook tool.
         """
         return self.python_notebook.execute_code(code)
+def log_memory_usage(tag: str = "Memory Usage") -> None:
+    """
+    Logs the current memory usage of the process.
 
+    Args:
+        tag (str): A custom tag for distinguishing the log entry.
+    """
+    # Get the current process
+    process = psutil.Process()
+    
+    # Retrieve memory usage information
+    memory_info = process.memory_info()
+    memory_used_mb = memory_info.rss / (1024 * 1024)  # Convert from bytes to MB
+    
+    # Log the memory usage with the specified tag
+    logger.info(f"{tag}: {memory_used_mb:.2f} MB")
+
+    # Optional: log additional memory info if needed
+    logger.debug(f"{tag} - Detailed Memory Info: {memory_info}")
+
+def load_config(config_path: str) -> dict:
+    """
+    Loads configuration settings from a JSON file.
+
+    Args:
+        config_path (str): The path to the configuration file.
+
+    Returns:
+        dict: Configuration settings as a dictionary.
+    """
+    if not os.path.exists(config_path):
+        logger.error(f"Configuration file not found at: {config_path}")
+        return {}
+
+    try:
+        with open(config_path, 'r') as config_file:
+            config = json.load(config_file)
+            logger.info(f"Loaded configuration from {config_path}")
+            return config
+    except Exception as e:
+        logger.error(f"Error loading configuration file at {config_path}: {e}")
+        return {}
+    import re
+import logging
+from collections import defaultdict
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+
+# Configure logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+# Error severities
+SEVERITY_LEVELS = {
+    "Critical": ["SyntaxError", "IndentationError"],
+    "High": ["ImportError", "ModuleNotFoundError", "AttributeError"],
+    "Medium": ["ValueError", "TypeError", "NameError"],
+    "Low": ["ZeroDivisionError"],
+    "General": ["Exception"],
+}
+
+# Regular expressions for error patterns and traceback capture
+ERROR_PATTERNS = [
+    {"name": "ValueError", "pattern": r"ValueError: (.*)"},
+    {"name": "TypeError", "pattern": r"TypeError: (.*)"},
+    {"name": "ImportError", "pattern": r"ImportError: (.*)"},
+    {"name": "ModuleNotFoundError", "pattern": r"ModuleNotFoundError: (.*)"},
+    {"name": "FileNotFoundError", "pattern": r"FileNotFoundError: (.*)"},
+    {"name": "AttributeError", "pattern": r"AttributeError: (.*)"},
+    {"name": "SyntaxError", "pattern": r"SyntaxError: (.*)"},
+    {"name": "IndentationError", "pattern": r"IndentationError: (.*)"},
+    {"name": "NameError", "pattern": r"NameError: (.*)"},
+    {"name": "ZeroDivisionError", "pattern": r"ZeroDivisionError: (.*)"},
+    {"name": "GeneralError", "pattern": r"Exception: (.*)"},
+]
+
+TRACEBACK_PATTERN = r"Traceback \(most recent call last\):\n(.*?)(?=\n[A-Z][a-zA-Z]+Error:|\Z)"
+
+def classify_severity(error_type: str) -> str:
+    """Classifies the severity level of the error based on the error type."""
+    for severity, types in SEVERITY_LEVELS.items():
+        if error_type in types:
+            return severity
+    return "Unknown"
+
+def capture_traceback(output: str) -> Optional[str]:
+    """Extracts traceback details from the output if available."""
+    traceback_match = re.search(TRACEBACK_PATTERN, output, re.DOTALL)
+    return traceback_match.group(0).strip() if traceback_match else None
+
+
+# Usage Example
+if __name__ == "__main__":
+    sample_output = """
+    Traceback (most recent call last):
+      File "example.py", line 10, in <module>
+        x = int("string")
+    ValueError: invalid literal for int() with base 10: 'string'
+    ModuleNotFoundError: No module named 'missing_module'
+    ValueError: could not convert string to float: 'NaN'
+    """
+
+    errors = detect_errors(sample_output)
+
+    if errors:
+        print("Errors detected with advanced diagnostics:")
+        for error_type, error_entries in errors.items():
+            print(f"{error_type}:")
+            for error in error_entries:
+                print(f"  - Message: {error['message']}, Severity: {error['severity']}, "
+                      f"Count: {error['count']}, Last Detected: {error['timestamp']}")
+                print(f"    Traceback: {error['traceback']}")
+    else:
+        print("No errors detected.")
 
 # Example usage
 notebook = PythonNotebook()

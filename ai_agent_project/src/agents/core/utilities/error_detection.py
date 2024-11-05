@@ -26,6 +26,9 @@ import traceback
 import subprocess
 import tempfile
 import os
+import re
+from collections import defaultdict
+from datetime import datetime
 
 
 class ErrorDetection:
@@ -143,6 +146,101 @@ class ErrorDetection:
         syntax_error = self.detect_syntax_errors(fixed_code)
         return fixed_code, syntax_error == ""
 
+    def detect_errors_in_output(self, output: str) -> dict:
+        """
+        Detects errors in the given output string, identifying occurrences, categorizing errors,
+        and capturing additional context for each unique error.
+
+        Args:
+            output (str): The output or log string to analyze.
+
+        Returns:
+            dict: A structured dictionary containing categorized errors with their types,
+                  severity levels, messages, counts, and contextual tracebacks.
+        """
+        detected_errors = defaultdict(list)
+        detection_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        unique_error_set = set()  # Track unique errors across sessions
+        ERROR_PATTERNS = [
+            {"name": "SyntaxError", "pattern": r"(SyntaxError:.+)"},
+            {"name": "RuntimeError", "pattern": r"(RuntimeError:.+)"},
+            {"name": "LogicError", "pattern": r"(LogicError:.+)"},
+        ]
+
+        for error_type in ERROR_PATTERNS:
+            matches = re.finditer(error_type["pattern"], output)
+            for match in matches:
+                error_message = match.group(1).strip()
+                severity = self.classify_severity(error_type["name"])
+                traceback_info = self.capture_traceback(output) or "No traceback available"
+                error_key = (error_type["name"], error_message)  # Unique key for deduplication
+
+                if error_key not in unique_error_set:
+                    unique_error_set.add(error_key)
+                    error_entry = {
+                        "message": error_message,
+                        "severity": severity,
+                        "traceback": traceback_info,
+                        "timestamp": detection_time,
+                        "count": 1
+                    }
+                    detected_errors[error_type["name"]].append(error_entry)
+                    print(f"Detected {severity} {error_type['name']}: {error_message} at {detection_time}")
+                else:
+                    # Increment the count for duplicate error messages
+                    for error in detected_errors[error_type["name"]]:
+                        if error["message"] == error_message:
+                            error["count"] += 1
+                            break
+
+        # Log a summary of detected errors with severities
+        if detected_errors:
+            for error_type, error_list in detected_errors.items():
+                for error in error_list:
+                    print(
+                        f"{error_type} ({error['severity']}): {error['message']} - "
+                        f"Count: {error['count']}, Last Occurred: {error['timestamp']}"
+                    )
+        else:
+            print("No errors detected.")
+
+        return detected_errors
+
+    def classify_severity(self, error_type: str) -> str:
+        """
+        Classifies the severity of an error based on its type.
+
+        Args:
+            error_type (str): The type of error to classify.
+
+        Returns:
+            str: A severity level (e.g., "Critical", "Warning", "Info").
+        """
+        if "Syntax" in error_type:
+            return "Critical"
+        elif "Runtime" in error_type:
+            return "High"
+        elif "Logic" in error_type:
+            return "Medium"
+        else:
+            return "Low"
+
+    def capture_traceback(self, output: str) -> str:
+        """
+        Extracts traceback details from an error output.
+
+        Args:
+            output (str): The output containing error details.
+
+        Returns:
+            str: The extracted traceback information.
+        """
+        traceback_start = output.find("Traceback (most recent call last):")
+        if traceback_start != -1:
+            return output[traceback_start:].strip()
+        return ""
+        
+
 # Usage Example
 if __name__ == "__main__":
     code_sample = """
@@ -174,19 +272,3 @@ def example_function():
     print("Fixed Code:\n", fixed_code)
     print("Fix Successful:", fix_successful)
 
-
-# -------------------------------------------------------------------
-# Future Enhancements for Improved Error Detection
-# -------------------------------------------------------------------
-# 1. **Enhanced Syntax Error Correction**: Integrate NLP models or machine 
-#    learning techniques to suggest sophisticated syntax corrections based 
-#    on context and common error patterns.
-#
-# 2. **Detailed Logic Analysis with Categorization**: Provide categorized 
-#    pylint reports to help identify and prioritize logic errors, e.g., 
-#    based on severity or occurrence frequency.
-#
-# 3. **Continuous Integration Compatibility**: Enable this module to run 
-#    as a CI pipeline step, auto-checking code for errors during 
-#    development and committing, and logging results for easier tracking.
-# -------------------------------------------------------------------

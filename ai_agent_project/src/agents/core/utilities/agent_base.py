@@ -1,28 +1,30 @@
+# agent_base.py
+
 # -------------------------------------------------------------------
 # File Path: C:\Projects\AI_Debugger_Assistant\ai_agent_project\src\agents\core\utilities\agent_base.py
 #
 # Project: AI_Debugger_Assistant
 #
 # Description:
-# Defines the `AgentBase` abstract class, which serves as a versatile
+# Defines the `RobustAgent` class, which serves as a versatile
 # foundational layer for agents within the project. This class provides
 # essential functionalities including task scheduling, structured logging,
 # dynamic error handling, persistent task state tracking, automated
 # retry mechanisms, modular plug-and-play task expansion, AI-driven
-# self-healing capabilities, and user interaction for high-level decisions.
+# self-healing capabilities, memory management, performance monitoring,
+# and user interaction for high-level decisions.
 #
 # Classes:
-# - AgentBase: An abstract base class designed for agents, equipping them 
-#   with core methods for task scheduling, error handling, logging, task 
-#   persistence, performance tracking, dynamic task loading, AI-driven
-#   error resolution, and user decision prompts.
+# - RobustAgent: A comprehensive agent class that integrates task scheduling,
+#   error handling, memory management, performance monitoring, self-improvement,
+#   and plugin support.
 #
 # Usage:
-# Agents inheriting from `AgentBase` should implement the `solve_task` method,
+# Agents inheriting from `RobustAgent` should implement the `solve_task` method,
 # defining their unique task-solving logic. The base class handles logging, 
 # scheduling, persistent state management, dynamic plugin loading, AI-driven
-# error handling, and user interaction to ensure task reliability, scalability,
-# and consistency.
+# error handling, memory management, performance monitoring, and user interaction
+# to ensure task reliability, scalability, and consistency.
 # -------------------------------------------------------------------
 
 import abc
@@ -36,11 +38,12 @@ from apscheduler.triggers.cron import CronTrigger
 from pathlib import Path
 import traceback
 import subprocess
-from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime, Text, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 import enum
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+from difflib import SequenceMatcher
 
 # Database Model Setup
 Base = declarative_base()
@@ -57,37 +60,79 @@ class Task(Base):
     id = Column(Integer, primary_key=True)
     type = Column(String, nullable=False)
     status = Column(Enum(TaskState), default=TaskState.pending)
-    start_time = Column(DateTime, default=datetime.utcnow)
+    start_time = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     end_time = Column(DateTime)
     result = Column(Text)  # Text to allow for larger outputs
     retry_count = Column(Integer, default=0)
 
+class ResolutionHistory(Base):
+    __tablename__ = 'resolution_history'
+    id = Column(Integer, primary_key=True)
+    error_message = Column(Text, nullable=False)
+    ai_suggestion = Column(Text)
+    user_decision = Column(Text)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class UserDecisionCache(Base):
+    __tablename__ = 'user_decision_cache'
+    id = Column(Integer, primary_key=True)
+    error_message = Column(Text, nullable=False, unique=True)
+    user_decision = Column(Text, nullable=False)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    usage_count = Column(Integer, default=0)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_used = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
 # Database Connection
-engine = create_engine('sqlite:///tasks.db')
+engine = create_engine('sqlite:///tasks.db', echo=False)
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
-class AgentBase(metaclass=abc.ABCMeta):
+class RobustAgent(metaclass=abc.ABCMeta):
     """
-    Abstract base class for agents in the AI_Debugger_Assistant project.
-    Offers core functionalities for task execution, structured logging, 
-    scheduling, error handling, persistent task state management, 
-    modular plug-and-play task expansion, AI-driven self-healing, and 
-    user interaction for high-level decisions.
+    RobustAgent Class
+
+    Represents a comprehensive AI agent with task management, error handling,
+    memory management, performance monitoring, and self-improvement capabilities.
+    Integrates with MemoryManager and PerformanceMonitor to handle memory and performance operations.
     """
 
     MAX_RETRIES = 3  # Max retries for task failure
+    SIMILARITY_THRESHOLD = 0.75  # Threshold for error similarity
 
-    def __init__(self, name: str, description: str, plugin_dir: str = "plugins", log_to_file: bool = False):
+    def __init__(self, name: str, description: str, project_name: str, plugin_dir: str = "plugins",
+                 memory_manager: Any = None, performance_monitor: Any = None,
+                 log_to_file: bool = False, dispatcher=None):
+        """
+        Initialize the RobustAgent with necessary components.
+
+        Args:
+            name (str): Name of the AI agent.
+            description (str): Description of the agent's capabilities.
+            project_name (str): Name of the project/domain the agent is associated with.
+            plugin_dir (str): Directory for dynamically loaded task plugins.
+            memory_manager (Any): Instance of MemoryManager for handling memory operations.
+            performance_monitor (Any): Instance of PerformanceMonitor for tracking performance.
+            log_to_file (bool): Whether to log to a file instead of the console.
+            dispatcher (Any): Reference to the dispatcher for self-improvement actions.
+        """
         self.name = name
         self.description = description
-        self.plugin_dir = plugin_dir  # Directory for dynamically loaded task plugins
+        self.project_name = project_name
+        self.plugin_dir = plugin_dir
+        self.memory_manager = memory_manager  # Should be an instance of MemoryManager
+        self.performance_monitor = performance_monitor  # Should be an instance of PerformanceMonitor
+        self.dispatcher = dispatcher
+
         self.logger = logging.getLogger(self.name)
         self._setup_logger(log_to_file)
+
         self.scheduler = BackgroundScheduler()
         self.scheduler.start()
+
         self.plugins = self.load_plugins()
-        self.logger.info(f"{self.name} initialized with description: {self.description} and plugin directory: {self.plugin_dir}")
+
+        self.logger.info(f"Initialized RobustAgent '{self.name}' for project '{self.project_name}'.")
 
     def _setup_logger(self, log_to_file: bool):
         """Sets up the logging configuration for the agent."""
@@ -97,6 +142,27 @@ class AgentBase(metaclass=abc.ABCMeta):
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
             self.logger.setLevel(logging.INFO)
+
+    def log(self, message: str, level=logging.INFO):
+        """Logs a message at the specified logging level."""
+        self.logger.log(level, message)
+
+    def log_json(self, message: str, data: dict, level=logging.INFO):
+        """Logs a structured message with additional data in JSON format."""
+        log_entry = {
+            "message": message,
+            "data": data
+        }
+        self.logger.log(level, json.dumps(log_entry))
+
+    def log_error(self, error: Exception, context: Optional[dict] = None):
+        """Logs an error message with traceback and optional contextual information."""
+        error_details = {
+            "error_message": str(error),
+            "traceback": traceback.format_exc(),
+            "context": context or {}
+        }
+        self.log_json("Error encountered", error_details, level=logging.ERROR)
 
     def load_plugins(self) -> Dict[str, Callable]:
         """
@@ -195,7 +261,50 @@ class AgentBase(metaclass=abc.ABCMeta):
         except Exception as e:
             self.log_error(e, {"task_data": task_data})
             self.update_task_state(task_id, TaskState.failed)
+            # Handle multi-error diagnosis
+            stack_trace = traceback.format_exc()
+            error_messages = self._extract_error_messages(stack_trace)
+            # Check for existing resolutions
+            resolution = self.check_resolution_history(error_messages)
+            if resolution:
+                self.logger.info(f"Found existing resolution: {resolution.ai_suggestion}")
+                return resolution.ai_suggestion
+            # Attempt AI-based resolution
+            for error_message in error_messages:
+                ai_suggestion = self.ai_diagnose_and_resolve(error_message)
+                if ai_suggestion:
+                    self.save_resolution_history(error_message, ai_suggestion)
+                    return ai_suggestion
+            # Check for cached user decision
+            user_decision = self.get_cached_user_decision(error_messages)
+            if user_decision:
+                self.logger.info(f"Applying cached user decision: {user_decision}")
+                return user_decision
+            # Prompt user for high-level decision
+            user_decision_input = input("AI could not resolve the issue. Do you want to attempt manual resolution? (y/n): ")
+            if user_decision_input.lower() == 'y':
+                manual_resolution = input("Please provide a manual resolution: ")
+                self.save_resolution_history(" | ".join(error_messages), manual_resolution)
+                self.cache_user_decision(" | ".join(error_messages), manual_resolution)
+                return manual_resolution
+            # Fallback mechanism
             return fallback() if fallback else "An error occurred while processing the task."
+
+    def _extract_error_messages(self, stack_trace: str) -> list:
+        """
+        Extracts individual error messages from a stack trace.
+
+        Args:
+            stack_trace (str): The full stack trace.
+
+        Returns:
+            list: A list of error messages.
+        """
+        error_messages = []
+        for line in stack_trace.splitlines():
+            if line.startswith("raise") or "Exception" in line:
+                error_messages.append(line.strip())
+        return error_messages
 
     def _execute_with_retry(self, task_id: int, task_data: dict) -> str:
         """
@@ -231,17 +340,162 @@ class AgentBase(metaclass=abc.ABCMeta):
                     self.logger.error(f"Max retries reached for task ID {task_id}.")
                     raise
 
-    def introduce(self) -> str:
-        """Provides a brief introduction of the agent, including name and description."""
-        introduction = f"I am {self.name}. {self.description}"
-        self.logger.info("Introduction called.")
-        return introduction
+    def save_task_state(self, task_type: str, initial_status: TaskState) -> int:
+        """Saves a new task state to the database for fault tolerance."""
+        session = Session()
+        task = Task(type=task_type, status=initial_status)
+        session.add(task)
+        session.commit()
+        self.logger.info(f"Task '{task_type}' saved with state '{initial_status.name}' and ID {task.id}.")
+        session.close()
+        return task.id
 
-    def describe_capabilities(self) -> str:
-        """Returns a description of the agent's capabilities."""
-        capabilities_description = f"{self.name} can execute tasks related to {self.description}."
-        self.logger.info("Capabilities described.")
-        return capabilities_description
+    def update_task_state(self, task_id: int, new_status: TaskState, result: Optional[str] = None):
+        """Updates the status and result of a task in the database."""
+        session = Session()
+        task = session.query(Task).filter(Task.id == task_id).one_or_none()
+        if task:
+            task.status = new_status
+            if result:
+                task.result = result
+            task.end_time = datetime.now(timezone.utc)
+            session.commit()
+            self.logger.info(f"Task ID {task_id} updated to status '{new_status.name}' with result: {result}")
+        else:
+            self.logger.error(f"Task ID {task_id} not found in the database.")
+        session.close()
+
+    def save_resolution_history(self, error_message: str, ai_suggestion: Optional[str] = None, user_decision: Optional[str] = None):
+        """Saves a resolution history entry to the database."""
+        session = Session()
+        resolution = ResolutionHistory(
+            error_message=error_message,
+            ai_suggestion=ai_suggestion,
+            user_decision=user_decision
+        )
+        session.add(resolution)
+        session.commit()
+        self.logger.info(f"Resolution history saved for error: {error_message}")
+        session.close()
+
+    def check_resolution_history(self, error_messages: list) -> Optional[ResolutionHistory]:
+        """
+        Checks if there is a resolution history for the given error messages.
+
+        Args:
+            error_messages (list): List of error messages.
+
+        Returns:
+            Optional[ResolutionHistory]: The resolution history entry if found.
+        """
+        session = Session()
+        combined_error = " | ".join(error_messages)
+        resolution = session.query(ResolutionHistory).filter(ResolutionHistory.error_message == combined_error).first()
+        session.close()
+        return resolution
+
+    # Enhanced cache retrieval with similarity matching
+    def get_cached_user_decision(self, error_messages: list) -> Optional[str]:
+        """
+        Retrieves a cached user decision for similar error messages.
+
+        Args:
+            error_messages (list): List of error messages.
+
+        Returns:
+            Optional[str]: The cached user decision if available, or None if no recent match is found.
+        """
+        session = Session()
+        combined_error = " | ".join(error_messages)
+
+        # Define an expiration period (e.g., 30 days)
+        expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
+        
+        # Fetch all recent cache entries and find the closest match based on similarity
+        recent_entries = (
+            session.query(UserDecisionCache)
+            .filter(UserDecisionCache.timestamp >= expiration_threshold)
+            .all()
+        )
+
+        # Evaluate similarity and track the closest match
+        best_match = None
+        best_similarity = 0
+        for entry in recent_entries:
+            similarity = SequenceMatcher(None, entry.error_message, combined_error).ratio()
+            if similarity > self.SIMILARITY_THRESHOLD and similarity > best_similarity:
+                best_match = entry
+                best_similarity = similarity
+
+        # Update usage metadata if a suitable match is found
+        if best_match:
+            best_match.usage_count += 1
+            best_match.last_used = datetime.now(timezone.utc)
+            session.commit()
+            self.logger.info(f"Retrieved cached decision with {best_similarity:.2f} similarity for error: {combined_error}")
+            session.close()
+            return best_match.user_decision
+        else:
+            self.logger.info(f"No suitable cached decision found for error: {combined_error}")
+            session.close()
+        return None
+
+    # Enhanced cache insertion with metadata and dynamic retention
+    def cache_user_decision(self, error_message: str, user_decision: str):
+        """
+        Caches the user's decision with metadata, usage tracking, and dynamic retention based on frequency.
+
+        Args:
+            error_message (str): The error message.
+            user_decision (str): The user's resolution decision.
+        """
+        session = Session()
+
+        # Define expiration threshold
+        expiration_threshold = datetime.now(timezone.utc) - timedelta(days=30)
+
+        # Cleanup expired entries and infrequent decisions beyond retention limits
+        session.query(UserDecisionCache).filter(
+            (UserDecisionCache.timestamp < expiration_threshold) |
+            (UserDecisionCache.usage_count < 2)  # Arbitrary limit for infrequent entries
+        ).delete()
+        session.commit()
+
+        # Check if a similar entry already exists
+        existing_entry = session.query(UserDecisionCache).filter(UserDecisionCache.error_message == error_message).first()
+
+        if existing_entry:
+            # Update the existing entry if a duplicate is found
+            existing_entry.user_decision = user_decision
+            existing_entry.usage_count += 1
+            existing_entry.last_used = datetime.now(timezone.utc)
+            self.logger.info(f"Updated cached user decision for error: {error_message}")
+        else:
+            # Add metadata and initial usage data for a new entry
+            cache_entry = UserDecisionCache(
+                error_message=error_message,
+                user_decision=user_decision,
+                timestamp=datetime.now(timezone.utc),
+                usage_count=1,
+                first_seen=datetime.now(timezone.utc),
+                last_used=datetime.now(timezone.utc)
+            )
+            session.add(cache_entry)
+            self.logger.info(f"User decision cached for error: {error_message}")
+
+        # Dynamic retention management: Remove low-usage entries if the cache size is high
+        max_cache_size = 1000  # Example size limit
+        current_cache_size = session.query(UserDecisionCache).count()
+        if current_cache_size > max_cache_size:
+            # Remove entries with low usage or that haven't been used recently
+            session.query(UserDecisionCache).filter(
+                UserDecisionCache.usage_count < 3,
+                UserDecisionCache.last_used < datetime.now(timezone.utc) - timedelta(days=7)
+            ).delete()
+            self.logger.info("Performed dynamic cleanup on cache due to size constraints.")
+
+        session.commit()
+        session.close()
 
     def schedule_task(self, cron_expression: str, task_callable: Callable, task_data: dict, task_id: Optional[str] = None):
         """Schedules a recurring task based on a cron expression."""
@@ -276,121 +530,221 @@ class AgentBase(metaclass=abc.ABCMeta):
         else:
             self.logger.warning(f"Task '{task_id}' not found for removal.")
 
-    def save_task_state(self, task_type: str, initial_status: TaskState) -> int:
-        """Saves a new task state to the database for fault tolerance."""
-        session = Session()
-        task = Task(type=task_type, status=initial_status)
-        session.add(task)
-        session.commit()
-        self.logger.info(f"Task '{task_type}' saved with state '{initial_status.name}' and ID {task.id}.")
-        return task.id
+    def introduce(self) -> str:
+        """Provides a brief introduction of the agent, including name and description."""
+        introduction = f"I am {self.name}. {self.description}"
+        self.logger.info("Introduction called.")
+        return introduction
 
-    def update_task_state(self, task_id: int, new_status: TaskState, result: Optional[str] = None):
-        """Updates the status and result of a task in the database."""
-        session = Session()
-        task = session.query(Task).filter(Task.id == task_id).one_or_none()
-        if task:
-            task.status = new_status
-            if result:
-                task.result = result
-            task.end_time = datetime.utcnow()
-            session.commit()
-            self.logger.info(f"Task ID {task_id} updated to status '{new_status.name}' with result: {result}")
-        else:
-            self.logger.error(f"Task ID {task_id} not found in the database.")
+    def describe_capabilities(self) -> str:
+        """Returns a description of the agent's capabilities."""
+        capabilities_description = f"{self.name} can execute tasks related to {self.description}."
+        self.logger.info("Capabilities described.")
+        return capabilities_description
 
     def shutdown(self):
         """Gracefully shuts down the scheduler and closes database sessions."""
         self.scheduler.shutdown()
         self.logger.info("Scheduler shut down successfully.")
 
-# -------------------------------------------------------------------
-# Example Usage
-# -------------------------------------------------------------------
-# Demonstrates subclassing, task execution, logging, scheduling, 
-# dynamic plugin execution, AI-driven error resolution, and user prompts.
+    # ------------------------
+    # Memory and Performance Integration
+    # ------------------------
 
-if __name__ == "__main__":
-    class SampleAgent(AgentBase):
-        def solve_task(self, task_data: dict) -> str:
-            """
-            Implements the abstract solve_task method. Processes the task_data
-            and returns a result. Can be extended to handle various task types.
-            """
-            task_type = task_data.get("type")
-            self.log(f"Processing task of type: {task_type}")
-            
-            if task_type == "simple_task":
-                return "Simple task completed successfully."
-            elif task_type == "trigger_error":
-                raise ValueError("Simulated task error for demonstration.")
-            elif task_type == "plugin_task":
-                plugin_name = task_data.get("plugin_name")
-                plugin_data = task_data.get("plugin_data", {})
-                return self.execute_plugin_task(plugin_name, plugin_data)
+    def run_query(self, prompt: str) -> str:
+        """
+        Run a query against Mistral 7B via Ollama and store the interaction in memory.
+
+        Args:
+            prompt (str): The user prompt to send to Mistral.
+
+        Returns:
+            str: The response from Mistral or an error message.
+        """
+        try:
+            # Retrieve relevant memory context
+            if self.memory_manager:
+                memory_context = self.memory_manager.retrieve_memory(self.project_name, limit=5)
+                complete_prompt = f"{memory_context}User: {prompt}\nAI:"
             else:
-                return "Unknown task type."
+                complete_prompt = f"User: {prompt}\nAI:"
 
-    # Instantiate an agent with file-based logging
-    agent = SampleAgent(
-        name="SampleAgent",
-        description="A test agent with plugin support and AI self-healing capabilities.",
-        plugin_dir="plugins",  # Ensure this directory exists and contains plugin modules
-        log_to_file=True
-    )
-    
-    # Introduction
-    print(agent.introduce())
-    
-    # Execute a simple task
-    simple_task_data = {"type": "simple_task"}
-    print(agent.solve_task(simple_task_data))
-    
-    # Execute a task that triggers an error to test AI-based resolution and user prompts
-    error_task_data = {"type": "trigger_error"}
-    print(agent.handle_task_with_error_handling(error_task_data))
-    
-    # Execute a plugin-based task (ensure 'example_plugin.py' exists in the plugins directory)
-    plugin_task_data = {
-        "type": "plugin_task",
-        "plugin_name": "example_plugin",  # Name of the plugin without .py extension
-        "plugin_data": {"input": "Test input for plugin"}
-    }
-    print(agent.solve_task(plugin_task_data))
-    
-    # Schedule a recurring task with fallback handling
-    # This example schedules the 'handle_task_with_error_handling' method to run every minute
-    scheduled_task_id = "recurring_error_task"
-    agent.schedule_task(
-        cron_expression="*/1 * * * *",  # Every minute
-        task_callable=agent.handle_task_with_error_handling,
-        task_data=error_task_data,
-        task_id=scheduled_task_id
-    )
-    
-    # Keep the script running to allow scheduled tasks to execute
-    try:
-        while True:
-            time.sleep(2)
-    except (KeyboardInterrupt, SystemExit):
-        agent.shutdown()
+            self.logger.debug(f"Complete prompt sent to AI:\n{complete_prompt}")
 
-# -------------------------------------------------------------------
-# Future Improvements
-# -------------------------------------------------------------------
-# 1. Dynamic Logger Configurations: Allow more dynamic configurations, such as setting
-#    log levels based on the environment.
-# 2. Enhanced Error Notifications: Integrate with notification services like Slack or
-#    email for error alerts.
-# 3. Task Retry Mechanism: Include task retry functionality with exponential backoff.
-# 4. Extensible Scheduler Options: Enable more complex scheduling options like intervals
-#    and custom triggers.
-# 5. Memory and Performance Tracking: Integrate memory and performance tracking,
-#    particularly for long-running tasks.
+            # Run the Ollama command with the complete prompt
+            result = subprocess.run(
+                ["ollama", "run", "mistral:latest", "--prompt", complete_prompt],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            response = result.stdout.strip()
+            self.logger.info(f"Received response from AI for prompt: '{prompt}'")
 
-# 7. Plugin Health Check: Add a validation process to verify each plugin’s availability before execution.
-# 8. AI-based Fallback Option: If Mistral fails, enable a fallback to another AI model or simpler resolution mechanism.
-# 12. Asynchronous Task Execution: Refactor task execution methods to be asynchronous for improved performance and scalability.
-# 13. Enhanced Plugin Interface: Define a more comprehensive plugin interface, possibly using abstract base classes, to ensure consistency across plugins.
-# 14. Security Enhancements: Implement security measures for plugin execution to prevent malicious code execution.
-# 15. Comprehensive Unit Testing: Develop unit tests for each component to ensure reliability and facilitate future development.
+            # Save the interaction to memory
+            if self.memory_manager:
+                self.memory_manager.save_memory(self.project_name, prompt, response)
+
+            # Log performance as success
+            if self.performance_monitor:
+                self.performance_monitor.log_performance(self.name, prompt, success=True, response=response)
+
+            return response
+        except subprocess.CalledProcessError as e:
+            error_message = f"An error occurred while communicating with Ollama: {e.stdout.strip() or e.stderr.strip()}"
+            self.logger.error(error_message)
+
+            # Log performance as failure
+            if self.performance_monitor:
+                self.performance_monitor.log_performance(self.name, prompt, success=False, response=error_message)
+
+            # Handle or cache based on error
+            self._handle_error(prompt, error_message)
+
+            return error_message
+        except Exception as ex:
+            error_message = f"An unexpected error occurred: {str(ex)}"
+            self.logger.error(error_message)
+
+            # Log performance as failure
+            if self.performance_monitor:
+                self.performance_monitor.log_performance(self.name, prompt, success=False, response=error_message)
+
+            # Handle or cache based on error
+            self._handle_error(prompt, error_message)
+
+            return error_message
+
+    def chat(self, user_input: str) -> str:
+        """
+        Facilitate a chat interaction with the AI agent.
+
+        Args:
+            user_input (str): Input from the user.
+
+        Returns:
+            str: Response from the AI agent.
+        """
+        self.logger.info(f"User input received: '{user_input}'")
+        response = self.run_query(user_input)
+        self.logger.info(f"AI response: '{response}'")
+
+        # Analyze performance after each interaction
+        self.self_improve()
+
+        return response
+
+    def _handle_error(self, prompt: str, error_message: str):
+        """
+        Handle errors by attempting to retrieve cached decisions or triggering self-improvement.
+
+        Args:
+            prompt (str): The original prompt that caused the error.
+            error_message (str): The error message encountered.
+        """
+        # Attempt to retrieve a cached decision based on the error message
+        similar_decision = self.get_cached_user_decision([error_message])
+        if similar_decision:
+            self.logger.info(f"Using cached decision for error: {error_message}")
+            return similar_decision
+        # Perform self-improvement or offer suggestion if no cached decision
+        self.self_improve()
+        # Optionally, cache a new decision based on the error
+        # For example, prompt the user for a decision and cache it
+        user_decision_input = input(f"Error encountered: {error_message}\nDo you want to provide a manual resolution? (y/n): ")
+        if user_decision_input.lower() == 'y':
+            manual_resolution = input("Please provide a manual resolution: ")
+            self.save_resolution_history(error_message, user_decision=manual_resolution)
+            self.cache_user_decision(error_message, manual_resolution)
+
+    def self_improve(self):
+        """
+        Analyze performance and adjust operations to improve future interactions.
+        This method embodies the self-improvement capability of the AI agent.
+        """
+        if not self.performance_monitor:
+            self.logger.info("No PerformanceMonitor instance available for self-improvement.")
+            return
+
+        analysis = self.performance_monitor.analyze_performance(self.name)
+        if not analysis:
+            self.logger.info("No performance data available for self-improvement.")
+            return
+
+        success_rate = analysis.get('success_rate', 0)
+        failures = analysis.get('failures', 0)
+
+        self.logger.debug(f"Self-improvement analysis: {analysis}")
+
+        # Thresholds for triggering improvements
+        SUCCESS_THRESHOLD = 80  # percent
+        FAILURE_THRESHOLD = 20  # percent
+
+        if success_rate < SUCCESS_THRESHOLD and failures > FAILURE_THRESHOLD:
+            # Identify common failure reasons
+            failure_reasons = analysis.get('failure_details', [])
+            common_reasons = {}
+            for reason in failure_reasons:
+                common_reasons[reason] = common_reasons.get(reason, 0) + 1
+            # Find the most common failure reason
+            if common_reasons:
+                most_common_reason = max(common_reasons, key=common_reasons.get)
+                self.logger.warning(f"Most common failure reason: {most_common_reason}")
+                # Take action based on failure reason
+                self.take_action_based_on_failure(most_common_reason)
+        elif success_rate >= SUCCESS_THRESHOLD:
+            self.logger.info("Performance is satisfactory. No immediate improvements needed.")
+        else:
+            self.logger.info("Performance analysis does not require immediate action.")
+
+    def take_action_based_on_failure(self, reason: str):
+        """
+        Takes specific actions based on the identified failure reason.
+
+        Args:
+            reason (str): The most common failure reason.
+        """
+        self.logger.info(f"Taking action based on failure reason: {reason}")
+        # Example actions based on failure reasons
+        suggestions = {
+            "communication": "I recommend checking the network connection or restarting the AI model service.",
+            "permission": "It seems there are permission issues. Please verify the file permissions.",
+            "docker": "Docker-related errors detected. Please ensure Docker is properly installed and configured.",
+            "timeout": "Increase the AI response timeout threshold or optimize the query for faster processing.",
+            # Add more reasons and suggestions as needed
+        }
+
+        # Find a suggestion based on the reason
+        suggestion = next((msg for key, msg in suggestions.items() if key in reason.lower()), 
+                          "I encountered an issue that needs attention. Please review the logs for more details.")
+        self.logger.info(suggestion)
+        print(f"AI Suggestion: {suggestion}")
+
+    def suggest_improvements(self):
+        """
+        Suggests improvements to its own operations based on performance data.
+        """
+        if not self.performance_monitor:
+            self.logger.info("No PerformanceMonitor instance available to suggest improvements.")
+            return
+
+        analysis = self.performance_monitor.analyze_performance(self.name)
+        if not analysis:
+            self.logger.info("No performance data available to suggest improvements.")
+            return
+
+        suggestions = []
+        success_rate = analysis.get('success_rate', 0)
+        failures = analysis.get('failures', 0)
+
+        if success_rate < 90:
+            suggestions.append("Consider refining task division strategies to better handle complex tasks.")
+        if failures > 5:
+            suggestions.append("Evaluate and possibly upgrade the tools in ToolServer to handle current task demands.")
+
+        if suggestions:
+            suggestion_message = "Here are some suggestions to improve my performance:\n" + "\n".join(suggestions)
+            self.logger.info(suggestion_message)
+            print(f"AI Suggestion: {suggestion_message}")
+        else:
+            self.logger.info("No improvements needed based on current performance data.")
