@@ -2,71 +2,77 @@ from typing import List, Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 class AgentPlanner:
     """
-    Plans tasks by dividing them into subtasks, assigning priorities, and creating customizable milestones.
+    The AgentPlanner class organizes tasks by dividing them into prioritized subtasks and creating milestones
+    based on customizable criteria or predefined intervals.
     """
-    def solve_task(self, task: str, priority: Optional[str] = None, milestone_criteria: Optional[str] = None) -> Dict[str, List[str]]:
+
+    def solve_task(self, task: str, priority: Optional[str] = "Medium", milestone_criteria: Optional[str] = None) -> Dict[str, List[Dict[str, str]]]:
         """
-        Solves the task by dividing it into subtasks, assigning priorities, and generating milestones based on criteria.
+        Plans the main task by dividing it into subtasks with assigned priorities and identifying milestones.
 
         Args:
-            task (str): The main task to be divided.
-            priority (Optional[str]): Priority level for subtasks (e.g., 'High', 'Medium', 'Low').
-            milestone_criteria (Optional[str]): Keyword to mark specific subtasks as milestones.
+            task (str): The primary task to organize.
+            priority (Optional[str]): Priority level for subtasks (default is 'Medium').
+            milestone_criteria (Optional[str]): Keyword to designate specific subtasks as milestones.
 
         Returns:
-            Dict[str, List[str]]: Contains 'subtasks' and 'milestones' along with their priorities.
+            Dict[str, List[Dict[str, str]]]: Contains 'subtasks' with priorities and 'milestones'.
         """
-        logger.info(f"Planning task: {task} with priority: {priority}")
+        logger.info(f"Starting task planning for: '{task}' with priority: {priority}")
+        
         subtasks = self.divide_task(task, priority)
         milestones = self.generate_milestones(subtasks, milestone_criteria)
+
         result = {
             'subtasks': subtasks,
             'milestones': milestones
         }
-        logger.debug(f"Task planning result: {result}")
+        logger.debug(f"Completed task planning with result: {result}")
         return result
 
-    def divide_task(self, task: str, priority: Optional[str] = None) -> List[Dict[str, str]]:
+    def divide_task(self, task: str, priority: str) -> List[Dict[str, str]]:
         """
-        Divides the main task into subtasks, optionally assigning a priority to each.
+        Splits the main task into a list of subtasks, each assigned a specified priority.
 
         Args:
-            task (str): The main task.
-            priority (Optional[str]): Priority level for subtasks.
+            task (str): The main task to split.
+            priority (str): Priority level for each subtask.
 
         Returns:
-            List[Dict[str, str]]: List of subtasks with their priorities.
+            List[Dict[str, str]]: List of subtasks with their assigned priorities.
         """
-        subtasks = [{'task': s.strip(), 'priority': priority if priority else 'Medium'} 
-                    for s in task.split('. ') if s.strip()]
-        logger.debug(f"Divided task into subtasks with priorities: {subtasks}")
+        subtasks = [{'task': subtask.strip(), 'priority': priority} 
+                    for subtask in task.split('. ') if subtask.strip()]
+        logger.debug(f"Divided task into subtasks: {subtasks}")
         return subtasks
 
-    def generate_milestones(self, subtasks: List[Dict[str, str]], milestone_criteria: Optional[str] = None) -> List[str]:
+    def generate_milestones(self, subtasks: List[Dict[str, str]], milestone_criteria: Optional[str] = None) -> List[Dict[str, str]]:
         """
-        Generates milestones by identifying subtasks that meet the criteria or fall at set intervals.
+        Identifies milestones among subtasks based on the criteria or default settings.
 
         Args:
-            subtasks (List[Dict[str, str]]): List of subtasks.
-            milestone_criteria (Optional[str]): Keyword to mark specific subtasks as milestones.
+            subtasks (List[Dict[str, str]]): List of subtasks with assigned priorities.
+            milestone_criteria (Optional[str]): Keyword for defining milestones.
 
         Returns:
-            List[str]: List of milestones.
+            List[Dict[str, str]]: List of milestone subtasks.
         """
         if milestone_criteria:
-            milestones = [subtask['task'] for subtask in subtasks if milestone_criteria in subtask['task']]
+            milestones = [subtask for subtask in subtasks if milestone_criteria in subtask['task']]
+            logger.debug(f"Milestones selected based on criteria '{milestone_criteria}': {milestones}")
         else:
-            # Default milestone criteria: every third task as milestone
-            milestones = [subtask['task'] for i, subtask in enumerate(subtasks) if (i + 1) % 3 == 0]
-        
-        logger.debug(f"Generated milestones from subtasks with criteria '{milestone_criteria}': {milestones}")
+            milestones = [subtasks[i] for i in range(2, len(subtasks), 3)]
+            logger.debug(f"Default milestone selection (every third task): {milestones}")
+
         return milestones
 
 if __name__ == "__main__":
+    # Example usage of the AgentPlanner
     planner = AgentPlanner()
     task_description = "Initialize the project environment. Set up the database. Develop the API. Integrate frontend and backend. Run initial tests. Deploy to staging."
     result = planner.solve_task(task_description, priority="High", milestone_criteria="Deploy")
-    print("Subtasks and milestones:", result)
+    print("Planned Subtasks and Milestones:", result)

@@ -21,20 +21,19 @@
 import os
 import datetime
 import json
+import logging
+from typing import List, Dict, Optional, Any
 from ai_agent_project.src.agents.core.utilities.agent_base import AgentBase  # Adjust path as necessary
+
+logger = logging.getLogger(__name__)
 
 class JournalAgent(AgentBase):
     """
     An agent specialized in creating and managing journal entries.
     Provides functions for saving logs, reflections, and summaries
     related to debugging and development tasks.
-    
-    Attributes:
-        name (str): The name of the agent.
-        description (str): Brief description of the agent's role.
-        journal_directory (str): Directory for storing journal entries.
     """
-
+    
     def __init__(self, name="JournalAgent", description="Agent for managing journal entries and logs"):
         """
         Initializes the JournalAgent with default parameters.
@@ -46,24 +45,23 @@ class JournalAgent(AgentBase):
         super().__init__(name, description)
         self.journal_directory = "journals"  # Default directory for journal entries
         os.makedirs(self.journal_directory, exist_ok=True)
-        self.logger.info(f"{self.name} initialized for journal management.")
+        logger.info(f"{self.name} initialized for journal management.")
 
-    def create_journal_entry(self, title: str, content: str, tags=None) -> dict:
+    def create_journal_entry(self, title: str, content: str, tags: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Creates a new journal entry with title, content, and optional tags.
 
         Args:
             title (str): The title of the journal entry.
             content (str): The main content of the journal entry.
-            tags (list of str, optional): Tags associated with the entry.
+            tags (Optional[List[str]]): Tags associated with the entry.
 
         Returns:
-            dict: Metadata of the created entry, including file path and timestamp.
+            Dict[str, Any]: Metadata of the created entry, including file path and timestamp.
         """
-        if tags is None:
-            tags = []
+        tags = tags or []
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"{self.journal_directory}/{title}_{timestamp}.json"
+        filename = os.path.join(self.journal_directory, f"{title}_{timestamp}.json")
         
         entry_data = {
             "title": title,
@@ -72,13 +70,16 @@ class JournalAgent(AgentBase):
             "timestamp": timestamp
         }
         
-        with open(filename, "w", encoding="utf-8") as file:
-            json.dump(entry_data, file, indent=4)
-        
-        self.logger.info(f"Journal entry '{title}' created at {filename}.")
-        return {"file_path": filename, "timestamp": timestamp}
+        try:
+            with open(filename, "w", encoding="utf-8") as file:
+                json.dump(entry_data, file, indent=4)
+            logger.info(f"Journal entry '{title}' created at {filename}.")
+            return {"file_path": filename, "timestamp": timestamp}
+        except IOError as e:
+            logger.error(f"Failed to create journal entry '{title}': {e}")
+            return {"error": f"Failed to create entry '{title}'"}
 
-    def retrieve_journal_entry(self, title: str) -> dict:
+    def retrieve_journal_entry(self, title: str) -> Dict[str, Any]:
         """
         Retrieves a journal entry by title from the journal directory.
 
@@ -86,25 +87,25 @@ class JournalAgent(AgentBase):
             title (str): Title of the journal entry to retrieve.
 
         Returns:
-            dict: The content of the journal entry if found, otherwise an error message.
+            Dict[str, Any]: The content of the journal entry if found, otherwise an error message.
         """
         try:
             matching_files = [f for f in os.listdir(self.journal_directory) if title in f]
             if not matching_files:
-                raise FileNotFoundError(f"No journal entry found with title '{title}'.")
+                raise FileNotFoundError(f"No journal entry found with title '{title}'")
 
             filepath = os.path.join(self.journal_directory, matching_files[0])
             with open(filepath, "r", encoding="utf-8") as file:
                 entry_data = json.load(file)
             
-            self.logger.info(f"Retrieved journal entry '{title}'.")
+            logger.info(f"Retrieved journal entry '{title}' from {filepath}.")
             return entry_data
-        except Exception as e:
+        except (FileNotFoundError, IOError, json.JSONDecodeError) as e:
             error_message = f"Error retrieving journal entry '{title}': {str(e)}"
-            self.logger.error(error_message)
+            logger.error(error_message)
             return {"error": error_message}
 
-    def update_journal_entry(self, title: str, new_content: str) -> dict:
+    def update_journal_entry(self, title: str, new_content: str) -> Dict[str, Any]:
         """
         Updates an existing journal entry with new content.
 
@@ -113,28 +114,27 @@ class JournalAgent(AgentBase):
             new_content (str): New content to update in the journal entry.
 
         Returns:
-            dict: Success message with the updated timestamp or error message.
+            Dict[str, Any]: Success message with the updated timestamp or error message.
         """
-        try:
-            entry = self.retrieve_journal_entry(title)
-            if "error" in entry:
-                return entry
+        entry = self.retrieve_journal_entry(title)
+        if "error" in entry:
+            return entry
 
-            entry["content"] = new_content
-            entry["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            filepath = os.path.join(self.journal_directory, f"{title}_{entry['timestamp']}.json")
-            
-            with open(filepath, "w", encoding="utf-8") as file:
+        entry["content"] = new_content
+        entry["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = os.path.join(self.journal_directory, f"{title}_{entry['timestamp']}.json")
+        
+        try:
+            with open(filename, "w", encoding="utf-8") as file:
                 json.dump(entry, file, indent=4)
-            
-            self.logger.info(f"Updated journal entry '{title}' with new content.")
-            return {"message": f"Journal entry '{title}' updated successfully.", "file_path": filepath}
-        except Exception as e:
+            logger.info(f"Updated journal entry '{title}' with new content at {filename}.")
+            return {"message": f"Journal entry '{title}' updated successfully.", "file_path": filename}
+        except IOError as e:
             error_message = f"Error updating journal entry '{title}': {str(e)}"
-            self.logger.error(error_message)
+            logger.error(error_message)
             return {"error": error_message}
 
-    def delete_journal_entry(self, title: str) -> dict:
+    def delete_journal_entry(self, title: str) -> Dict[str, str]:
         """
         Deletes a journal entry by title.
 
@@ -142,7 +142,7 @@ class JournalAgent(AgentBase):
             title (str): Title of the journal entry to delete.
 
         Returns:
-            dict: Success or error message.
+            Dict[str, str]: Success or error message.
         """
         try:
             matching_files = [f for f in os.listdir(self.journal_directory) if title in f]
@@ -151,19 +151,19 @@ class JournalAgent(AgentBase):
 
             filepath = os.path.join(self.journal_directory, matching_files[0])
             os.remove(filepath)
-            self.logger.info(f"Deleted journal entry '{title}'.")
+            logger.info(f"Deleted journal entry '{title}' at {filepath}.")
             return {"message": f"Journal entry '{title}' deleted successfully."}
-        except Exception as e:
+        except (FileNotFoundError, IOError) as e:
             error_message = f"Error deleting journal entry '{title}': {str(e)}"
-            self.logger.error(error_message)
+            logger.error(error_message)
             return {"error": error_message}
 
-    def list_journal_entries(self) -> list:
+    def list_journal_entries(self) -> List[Dict[str, str]]:
         """
         Lists all journal entries in the journal directory.
 
         Returns:
-            list: A list of journal entry metadata including titles and timestamps.
+            List[Dict[str, str]]: A list of journal entry metadata including titles and timestamps.
         """
         entries = []
         for filename in os.listdir(self.journal_directory):
@@ -172,45 +172,40 @@ class JournalAgent(AgentBase):
                     entry_data = json.load(file)
                     entries.append({"title": entry_data["title"], "timestamp": entry_data["timestamp"]})
         
-        self.logger.info(f"Listed {len(entries)} journal entries.")
+        logger.info(f"Listed {len(entries)} journal entries.")
         return entries
     
-    def perform_task(self, task_data: dict) -> str:
+    def perform_task(self, task_data: Dict[str, Any]) -> str:
         """
-        Placeholder implementation of perform_task. Executes a journal-related task based on task_data.
+        Executes a journal-related task based on task_data.
 
         Args:
-            task_data (dict): Information necessary for the task execution. 
-                              Expected to have keys like "action" (e.g., "create", "update", etc.)
-                              and necessary fields like "title", "content".
+            task_data (Dict[str, Any]): Information necessary for the task execution, with keys like "action", "title", etc.
 
         Returns:
             str: Outcome of the task.
         """
         action = task_data.get("action")
+        title = task_data.get("title", "Untitled Entry")
+        content = task_data.get("content", "")
+        tags = task_data.get("tags", [])
         
         if action == "create":
-            title = task_data.get("title", "Untitled Entry")
-            content = task_data.get("content", "No content provided.")
-            tags = task_data.get("tags", [])
-            self.create_journal_entry(title, content, tags)
-            return f"Journal entry '{title}' created."
+            response = self.create_journal_entry(title, content, tags)
+            return response.get("message", f"Journal entry '{title}' created.")
         
         elif action == "retrieve":
-            title = task_data.get("title")
             entry = self.retrieve_journal_entry(title)
-            return f"Retrieved entry: {entry}"
+            return f"Retrieved entry: {entry}" if "error" not in entry else entry["error"]
         
         elif action == "update":
-            title = task_data.get("title")
-            new_content = task_data.get("new_content")
-            self.update_journal_entry(title, new_content)
-            return f"Journal entry '{title}' updated."
+            new_content = task_data.get("new_content", content)
+            response = self.update_journal_entry(title, new_content)
+            return response.get("message", response.get("error"))
         
         elif action == "delete":
-            title = task_data.get("title")
-            self.delete_journal_entry(title)
-            return f"Journal entry '{title}' deleted."
+            response = self.delete_journal_entry(title)
+            return response.get("message", response.get("error"))
         
         elif action == "list":
             entries = self.list_journal_entries()
